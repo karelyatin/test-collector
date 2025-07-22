@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # OVN Metrics Collector - Main metrics endpoint
+  - job_name: 'ovn-metrics-collector'
+    static_configs:
+      - targets: ['ovn-metrics-collector:9476']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+
+  # OVN Metrics Collector - OVN-specific metrics endpoint  
+  - job_name: 'ovn-metrics-collector-ovn'
+    static_configs:
+      - targets: ['ovn-metrics-collector:9310']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+
+  # If running multiple instances or in Kubernetes, you can use service discovery
+  # - job_name: 'ovn-metrics-collector-k8s'
+  #   kubernetes_sd_configs:
+  #     - role: pod
+  #   relabel_configs:
+  #     - source_labels: [__meta_kubernetes_pod_label_app]
+  #       action: keep
+  #       regex: ovn-metrics-collector
+  #     - source_labels: [__meta_kubernetes_pod_ip]
+  #       target_label: __address__
+  #       replacement: ${1}:9476 

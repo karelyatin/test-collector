@@ -1,0 +1,189 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn-metrics-collector
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovn-metrics-collector
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ovn-metrics-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ovn-metrics-collector
+subjects:
+- kind: ServiceAccount
+  name: ovn-metrics-collector
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ovn-metrics-collector
+  namespace: kube-system
+  labels:
+    app: ovn-metrics-collector
+spec:
+  selector:
+    matchLabels:
+      app: ovn-metrics-collector
+  template:
+    metadata:
+      labels:
+        app: ovn-metrics-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9476"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ovn-metrics-collector
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      containers:
+      - name: metrics-collector
+        image: ovn-metrics-collector:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+                 args:
+         - --loglevel=2
+         # Customize which metrics to collect by setting these to true/false
+         - --export-ovs-metrics=true           # OVS datapath, bridge, interface metrics
+         - --enable-ovn-nb-db-metrics=true        # OVN NB database connection and transaction metrics
+         - --enable-ovn-sb-db-metrics=true        # OVN SB database connection and transaction metrics
+         - --enable-ovn-controller-metrics=true # OVN controller flow and bridge metrics
+         - --enable-ovn-northd-metrics=true    # OVN northd status and configuration metrics
+         - --metrics-interval=30
+         - --metrics-bind-address=0.0.0.0:9476
+         - --ovn-metrics-bind-address=0.0.0.0:9310
+        ports:
+        - name: metrics
+          containerPort: 9476
+          hostPort: 9476
+          protocol: TCP
+        - name: ovn-metrics
+          containerPort: 9310
+          hostPort: 9310
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9476
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9476
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - name: ovs-run
+          mountPath: /var/run/openvswitch
+          readOnly: true
+        - name: ovn-run
+          mountPath: /var/run/ovn
+          readOnly: true
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: host-sys
+          mountPath: /host/sys
+          readOnly: true
+      volumes:
+      - name: ovs-run
+        hostPath:
+          path: /var/run/openvswitch
+          type: DirectoryOrCreate
+      - name: ovn-run
+        hostPath:
+          path: /var/run/ovn
+          type: DirectoryOrCreate
+      - name: host-proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: host-sys
+        hostPath:
+          path: /sys
+          type: Directory
+      nodeSelector:
+        kubernetes.io/os: linux
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovn-metrics-collector
+  namespace: kube-system
+  labels:
+    app: ovn-metrics-collector
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9476"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: ovn-metrics-collector
+  ports:
+  - name: metrics
+    port: 9476
+    targetPort: 9476
+    protocol: TCP
+  - name: ovn-metrics
+    port: 9310
+    targetPort: 9310
+    protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ovn-metrics-collector
+  namespace: kube-system
+  labels:
+    app: ovn-metrics-collector
+spec:
+  selector:
+    matchLabels:
+      app: ovn-metrics-collector
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+  - port: ovn-metrics
+    interval: 30s
+    path: /metrics
